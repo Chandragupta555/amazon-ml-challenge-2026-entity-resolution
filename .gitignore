@@ -1,0 +1,10 @@
+student_resource/dataset/
+*.parquet
+output/*.tsv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+*.ipynb_checkpoints
+__MACOSX/

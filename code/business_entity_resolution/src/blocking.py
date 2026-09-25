@@ -1,0 +1,1 @@
+"""Builds a candidate pair set (source1_entity_id -> candidate_entity_ids from Source 2/3) using blocking/candidate generation. Outputs output/candidate_pairs.tsv in the organizer's required format."""

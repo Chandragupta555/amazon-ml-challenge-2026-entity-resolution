@@ -1,0 +1,1 @@
+"""Takes per-pair scores, enforces one-to-one assignment (no S2/S3 record claimed by more than one S1 entity), applies a tuned decision threshold, and writes output/matching_results.tsv in the organizer's exact required format."""
