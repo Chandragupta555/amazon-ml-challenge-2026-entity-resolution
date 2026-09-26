@@ -1,6 +1,6 @@
 student_resource/dataset/
 *.parquet
-output/*.tsv
+output/**/*.tsv
 __pycache__/
 *.pyc
 .venv/
