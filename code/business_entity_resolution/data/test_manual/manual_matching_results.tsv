@@ -1,0 +1,6 @@
+source1_entity_id	matched_entity_ids
+S1-TEST-A	S2-X1,S2-X2
+S1-TEST-B	S2-X1,S2-X2,S2-X4
+S1-TEST-C	S3-X5
+S1-TEST-D	
+S1-TEST-E	
