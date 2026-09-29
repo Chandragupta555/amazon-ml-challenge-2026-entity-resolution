@@ -26,6 +26,8 @@ try:
     import psutil
 except ImportError:
     psutil = None
+from typing import Any
+
 
 
 
@@ -250,6 +252,74 @@ def load_clean_data(sample: bool) -> dict[str, pd.DataFrame]:
     return clean_data
 
 
+def build_feature_lookup_maps(clean_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
+    """Pre-build entity lookup dictionaries once from clean_data to avoid rebuilding per chunk.
+
+    Parameters
+    ----------
+    clean_data : dict[str, pd.DataFrame]
+        Dictionary of cleaned DataFrames for 'source1', 'source2', and 'source3'.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary containing pre-indexed lookup maps for names, addresses,
+        postal codes, and context attributes.
+    """
+    s1_table = clean_data["source1"]
+    s2_table = clean_data["source2"]
+    s3_table = clean_data["source3"]
+
+    s1_ids = s1_table["entity_id"].astype(str).tolist()
+    s2_ids = s2_table["entity_id"].astype(str).tolist()
+    s3_ids = s3_table["entity_id"].astype(str).tolist()
+
+    name_maps = (
+        dict(zip(s1_ids, s1_table["name_clean"].fillna(""))),
+        dict(zip(s2_ids, s2_table["name_clean"].fillna(""))),
+        dict(zip(s3_ids, s3_table["name_clean"].fillna(""))),
+    )
+    address_maps = (
+        dict(zip(s1_ids, s1_table["address_clean"].fillna(""))),
+        dict(zip(s2_ids, s2_table["address_clean"].fillna(""))),
+        dict(zip(s3_ids, s3_table["address_clean"].fillna(""))),
+    )
+    postal_maps = (
+        dict(zip(s1_ids, s1_table["postal_code"].fillna(""))),
+        dict(zip(s2_ids, s2_table["postal_code"].fillna(""))),
+        dict(zip(s3_ids, s3_table["postal_code"].fillna(""))),
+    )
+    context_maps = {
+        "country": (
+            dict(zip(s1_ids, s1_table["country"].fillna(""))),
+            dict(zip(s2_ids, s2_table["country"].fillna(""))),
+            dict(zip(s3_ids, s3_table["country"].fillna(""))),
+        ),
+        "suffix": (
+            dict(zip(s1_ids, s1_table["name_legal_suffix"].fillna(""))),
+            dict(zip(s2_ids, s2_table["name_legal_suffix"].fillna(""))),
+            dict(zip(s3_ids, s3_table["name_legal_suffix"].fillna(""))),
+        ),
+        "domain": (
+            dict(zip(s1_ids, s1_table["name_is_domain"].fillna(False))),
+            dict(zip(s2_ids, s2_table["name_is_domain"].fillna(False))),
+            dict(zip(s3_ids, s3_table["name_is_domain"].fillna(False))),
+        ),
+        "script": (
+            dict(zip(s1_ids, s1_table["has_non_latin_script"].fillna(False))),
+            dict(zip(s2_ids, s2_table["has_non_latin_script"].fillna(False))),
+            dict(zip(s3_ids, s3_table["has_non_latin_script"].fillna(False))),
+        ),
+    }
+
+    return {
+        "name_maps": name_maps,
+        "address_maps": address_maps,
+        "postal_maps": postal_maps,
+        "context_maps": context_maps,
+    }
+
+
 def attach_labels(
     pairs_df: pd.DataFrame,
     sample: bool = False,
@@ -340,6 +410,7 @@ def compute_name_features(
     pairs_df: pd.DataFrame,
     clean_data: dict[str, pd.DataFrame],
     sample: bool = False,
+    name_maps: tuple[dict[str, str], dict[str, str], dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Compute name-based pairwise similarity features.
 
@@ -362,6 +433,8 @@ def compute_name_features(
         Dictionary of cleaned DataFrames for 'source1', 'source2', and 'source3'.
     sample : bool, default False
         Whether running in sample mode.
+    name_maps : tuple of 3 dicts, optional
+        Pre-built (s1_name_map, s2_name_map, s3_name_map) to avoid rebuilding per chunk.
 
     Returns
     -------
@@ -371,13 +444,16 @@ def compute_name_features(
     out_df = pairs_df.copy()
 
     # Pre-index entity_id -> name_clean for quick lookup
-    s1_table = clean_data["source1"]
-    s2_table = clean_data["source2"]
-    s3_table = clean_data["source3"]
+    if name_maps is not None:
+        s1_name_map, s2_name_map, s3_name_map = name_maps
+    else:
+        s1_table = clean_data["source1"]
+        s2_table = clean_data["source2"]
+        s3_table = clean_data["source3"]
 
-    s1_name_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["name_clean"].fillna("")))
-    s2_name_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["name_clean"].fillna("")))
-    s3_name_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["name_clean"].fillna("")))
+        s1_name_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["name_clean"].fillna("")))
+        s2_name_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["name_clean"].fillna("")))
+        s3_name_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["name_clean"].fillna("")))
 
     # Retrieve Source 1 names
     s1_ids = out_df["source1_entity_id"].astype(str).str.strip()
@@ -481,6 +557,7 @@ def compute_address_features(
     pairs_df: pd.DataFrame,
     clean_data: dict[str, pd.DataFrame],
     executor: ProcessPoolExecutor | None = None,
+    address_maps: tuple[dict[str, str], dict[str, str], dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Compute address-based pairwise similarity features using address_clean.
 
@@ -502,6 +579,8 @@ def compute_address_features(
         Dictionary of cleaned DataFrames for 'source1', 'source2', and 'source3'.
     executor : ProcessPoolExecutor | None, optional
         Reused process pool executor for parallel chunk computation across CPU cores.
+    address_maps : tuple of 3 dicts, optional
+        Pre-built (s1_addr_map, s2_addr_map, s3_addr_map) to avoid rebuilding per chunk.
 
     Returns
     -------
@@ -511,13 +590,16 @@ def compute_address_features(
     out_df = pairs_df.copy()
 
     # Pre-index entity_id -> address_clean for quick lookup
-    s1_table = clean_data["source1"]
-    s2_table = clean_data["source2"]
-    s3_table = clean_data["source3"]
+    if address_maps is not None:
+        s1_addr_map, s2_addr_map, s3_addr_map = address_maps
+    else:
+        s1_table = clean_data["source1"]
+        s2_table = clean_data["source2"]
+        s3_table = clean_data["source3"]
 
-    s1_addr_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["address_clean"].fillna("")))
-    s2_addr_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["address_clean"].fillna("")))
-    s3_addr_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["address_clean"].fillna("")))
+        s1_addr_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["address_clean"].fillna("")))
+        s2_addr_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["address_clean"].fillna("")))
+        s3_addr_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["address_clean"].fillna("")))
 
     # Retrieve Source 1 addresses
     s1_ids = out_df["source1_entity_id"].astype(str).str.strip()
@@ -600,6 +682,7 @@ def compute_address_features(
 def compute_postal_code_features(
     pairs_df: pd.DataFrame,
     clean_data: dict[str, pd.DataFrame],
+    postal_maps: tuple[dict[str, str], dict[str, str], dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Compute postal_code_match feature between source1 and candidate entities.
 
@@ -614,6 +697,8 @@ def compute_postal_code_features(
         DataFrame with columns 'source1_entity_id' and 'candidate_entity_id'.
     clean_data : dict[str, pd.DataFrame]
         Dictionary of cleaned DataFrames for 'source1', 'source2', and 'source3'.
+    postal_maps : tuple of 3 dicts, optional
+        Pre-built (s1_postal_map, s2_postal_map, s3_postal_map) to avoid rebuilding per chunk.
 
     Returns
     -------
@@ -623,13 +708,16 @@ def compute_postal_code_features(
     out_df = pairs_df.copy()
 
     # Pre-index entity_id -> postal_code for quick lookup
-    s1_table = clean_data["source1"]
-    s2_table = clean_data["source2"]
-    s3_table = clean_data["source3"]
+    if postal_maps is not None:
+        s1_postal_map, s2_postal_map, s3_postal_map = postal_maps
+    else:
+        s1_table = clean_data["source1"]
+        s2_table = clean_data["source2"]
+        s3_table = clean_data["source3"]
 
-    s1_postal_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["postal_code"].fillna("")))
-    s2_postal_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["postal_code"].fillna("")))
-    s3_postal_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["postal_code"].fillna("")))
+        s1_postal_map = dict(zip(s1_table["entity_id"].astype(str), s1_table["postal_code"].fillna("")))
+        s2_postal_map = dict(zip(s2_table["entity_id"].astype(str), s2_table["postal_code"].fillna("")))
+        s3_postal_map = dict(zip(s3_table["entity_id"].astype(str), s3_table["postal_code"].fillna("")))
 
     # Retrieve Source 1 postal codes
     s1_ids = out_df["source1_entity_id"].astype(str).str.strip()
@@ -696,6 +784,7 @@ def _is_truthy(val) -> bool:
 def compute_context_features(
     pairs_df: pd.DataFrame,
     clean_data: dict[str, pd.DataFrame],
+    context_maps: dict[str, tuple[dict, dict, dict]] | None = None,
 ) -> pd.DataFrame:
     """Compute context features using columns produced by normalize.py.
 
@@ -719,6 +808,8 @@ def compute_context_features(
         DataFrame with columns 'source1_entity_id' and 'candidate_entity_id'.
     clean_data : dict[str, pd.DataFrame]
         Dictionary of cleaned DataFrames for 'source1', 'source2', and 'source3'.
+    context_maps : dict, optional
+        Pre-built dictionary containing 'country', 'suffix', 'domain', 'script' tuples of dicts.
 
     Returns
     -------
@@ -727,30 +818,36 @@ def compute_context_features(
     """
     out_df = pairs_df.copy()
 
-    s1_table = clean_data["source1"]
-    s2_table = clean_data["source2"]
-    s3_table = clean_data["source3"]
+    if context_maps is not None:
+        s1_country_map, s2_country_map, s3_country_map = context_maps["country"]
+        s1_suffix_map, s2_suffix_map, s3_suffix_map = context_maps["suffix"]
+        s1_domain_map, s2_domain_map, s3_domain_map = context_maps["domain"]
+        s1_script_map, s2_script_map, s3_script_map = context_maps["script"]
+    else:
+        s1_table = clean_data["source1"]
+        s2_table = clean_data["source2"]
+        s3_table = clean_data["source3"]
 
-    s1_ids_clean = s1_table["entity_id"].astype(str)
-    s2_ids_clean = s2_table["entity_id"].astype(str)
-    s3_ids_clean = s3_table["entity_id"].astype(str)
+        s1_ids_clean = s1_table["entity_id"].astype(str)
+        s2_ids_clean = s2_table["entity_id"].astype(str)
+        s3_ids_clean = s3_table["entity_id"].astype(str)
 
-    # Pre-index mappings for the 4 attributes
-    s1_country_map = dict(zip(s1_ids_clean, s1_table["country"].fillna("")))
-    s2_country_map = dict(zip(s2_ids_clean, s2_table["country"].fillna("")))
-    s3_country_map = dict(zip(s3_ids_clean, s3_table["country"].fillna("")))
+        # Pre-index mappings for the 4 attributes
+        s1_country_map = dict(zip(s1_ids_clean, s1_table["country"].fillna("")))
+        s2_country_map = dict(zip(s2_ids_clean, s2_table["country"].fillna("")))
+        s3_country_map = dict(zip(s3_ids_clean, s3_table["country"].fillna("")))
 
-    s1_suffix_map = dict(zip(s1_ids_clean, s1_table["name_legal_suffix"].fillna("")))
-    s2_suffix_map = dict(zip(s2_ids_clean, s2_table["name_legal_suffix"].fillna("")))
-    s3_suffix_map = dict(zip(s3_ids_clean, s3_table["name_legal_suffix"].fillna("")))
+        s1_suffix_map = dict(zip(s1_ids_clean, s1_table["name_legal_suffix"].fillna("")))
+        s2_suffix_map = dict(zip(s2_ids_clean, s2_table["name_legal_suffix"].fillna("")))
+        s3_suffix_map = dict(zip(s3_ids_clean, s3_table["name_legal_suffix"].fillna("")))
 
-    s1_domain_map = dict(zip(s1_ids_clean, s1_table["name_is_domain"].fillna(False)))
-    s2_domain_map = dict(zip(s2_ids_clean, s2_table["name_is_domain"].fillna(False)))
-    s3_domain_map = dict(zip(s3_ids_clean, s3_table["name_is_domain"].fillna(False)))
+        s1_domain_map = dict(zip(s1_ids_clean, s1_table["name_is_domain"].fillna(False)))
+        s2_domain_map = dict(zip(s2_ids_clean, s2_table["name_is_domain"].fillna(False)))
+        s3_domain_map = dict(zip(s3_ids_clean, s3_table["name_is_domain"].fillna(False)))
 
-    s1_script_map = dict(zip(s1_ids_clean, s1_table["has_non_latin_script"].fillna(False)))
-    s2_script_map = dict(zip(s2_ids_clean, s2_table["has_non_latin_script"].fillna(False)))
-    s3_script_map = dict(zip(s3_ids_clean, s3_table["has_non_latin_script"].fillna(False)))
+        s1_script_map = dict(zip(s1_ids_clean, s1_table["has_non_latin_script"].fillna(False)))
+        s2_script_map = dict(zip(s2_ids_clean, s2_table["has_non_latin_script"].fillna(False)))
+        s3_script_map = dict(zip(s3_ids_clean, s3_table["has_non_latin_script"].fillna(False)))
 
     # Source 1 lookups
     s1_ids = out_df["source1_entity_id"].astype(str).str.strip()
@@ -982,6 +1079,9 @@ def build_pair_features_chunked(
     # 2. Load cleaned data once
     clean_data = load_clean_data(sample=sample)
     print("[INFO] Loaded cleaned source tables once.")
+    t_maps_start = time.time()
+    lookup_maps = build_feature_lookup_maps(clean_data)
+    print(f"[INFO] Pre-indexed feature lookup maps in {time.time() - t_maps_start:.2f}s.")
 
     # 3. Pre-load ground truth labels once to build matched_pairs set
     gt_pairs: set[tuple[str, str]] = set()
@@ -1038,10 +1138,18 @@ def build_pair_features_chunked(
                 chunk_slice = pairs_df.iloc[start_idx:end_idx].copy()
 
                 # Pipeline execution on chunk: features then labels
-                chunk_df = compute_name_features(chunk_slice, clean_data, sample=sample)
-                chunk_df = compute_address_features(chunk_df, clean_data, executor=executor)
-                chunk_df = compute_postal_code_features(chunk_df, clean_data)
-                chunk_df = compute_context_features(chunk_df, clean_data)
+                chunk_df = compute_name_features(
+                    chunk_slice, clean_data, sample=sample, name_maps=lookup_maps["name_maps"]
+                )
+                chunk_df = compute_address_features(
+                    chunk_df, clean_data, executor=executor, address_maps=lookup_maps["address_maps"]
+                )
+                chunk_df = compute_postal_code_features(
+                    chunk_df, clean_data, postal_maps=lookup_maps["postal_maps"]
+                )
+                chunk_df = compute_context_features(
+                    chunk_df, clean_data, context_maps=lookup_maps["context_maps"]
+                )
                 if has_labels:
                     chunk_df = attach_labels(chunk_df, sample=sample, matched_pairs=gt_pairs)
                     chunk_df["is_match"] = chunk_df["is_match"].astype(bool)
@@ -1170,9 +1278,12 @@ def build_pair_features_for_scoring(
     total_pairs = len(pairs_df)
     print(f"[INFO] Loaded candidate pairs: {total_pairs:,d} rows in {time.time() - t_load_start:.2f}s")
 
-    # 2. Load cleaned data once
+    # 2. Load cleaned data once and pre-build lookup maps
     clean_data = load_clean_data(sample=clean_data_sample)
     print("[INFO] Loaded cleaned source tables once.")
+    t_maps_start = time.time()
+    lookup_maps = build_feature_lookup_maps(clean_data)
+    print(f"[INFO] Pre-indexed feature lookup maps in {time.time() - t_maps_start:.2f}s.")
 
     feature_cols = [
         "name_token_sort_ratio",
@@ -1202,10 +1313,18 @@ def build_pair_features_for_scoring(
                 chunk_slice = pairs_df.iloc[start_idx:end_idx].copy()
 
                 # Pipeline execution on chunk without labels
-                chunk_df = compute_name_features(chunk_slice, clean_data, sample=clean_data_sample)
-                chunk_df = compute_address_features(chunk_df, clean_data, executor=executor)
-                chunk_df = compute_postal_code_features(chunk_df, clean_data)
-                chunk_df = compute_context_features(chunk_df, clean_data)
+                chunk_df = compute_name_features(
+                    chunk_slice, clean_data, sample=clean_data_sample, name_maps=lookup_maps["name_maps"]
+                )
+                chunk_df = compute_address_features(
+                    chunk_df, clean_data, executor=executor, address_maps=lookup_maps["address_maps"]
+                )
+                chunk_df = compute_postal_code_features(
+                    chunk_df, clean_data, postal_maps=lookup_maps["postal_maps"]
+                )
+                chunk_df = compute_context_features(
+                    chunk_df, clean_data, context_maps=lookup_maps["context_maps"]
+                )
 
                 for col in feature_cols:
                     chunk_df[col] = chunk_df[col].astype(np.float32)
